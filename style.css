@@ -1,0 +1,46 @@
+body {
+    font-family: Arial, sans-serif;
+    margin: 20px;
+    justify-content: center;
+    align-items: center;
+}
+
+h1 {
+   color: #333;
+   text-align: center;
+   justify-content: center;
+   margin-top: center;
+}
+
+input {
+    padding: 5px;
+    margin-right: 5px;
+}
+
+button {
+    padding: 5px 10px;
+}
+
+#results {
+    margin-top: 20px;
+}
+
+#results div {
+    margin-bottom: 10px;
+}
+
+.search-container {
+    display: flex;
+    justify-content: center; 
+    align-items: center;     
+    margin-top: 20px;      
+}
+
+.search-container input {
+    padding: 5px;
+    margin-right: 5px;
+}
+
+.search-container button {
+    padding: 5px 10px;
+}
