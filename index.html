@@ -91,9 +91,10 @@
 <body>
     <h1>Faculty Search Tool</h1>
     <div class="search-container">
-        <input type="text" id="searchInput" placeholder="Enter research keyword">
-        <button type="button" onclick="searchFaculty()">Search</button>
+        <input type="text" id="keywordInput" placeholder="Enter research keyword">
+        <button id="searchButton">Search Publications</button>
         <button onclick="testFetchPublications()">Test API Call</button>
+        <button id="searchFacultyButton">Search Faculty</button>
 
     </div>
     
@@ -109,7 +110,7 @@
         },
         {
             name: "Muhammad Ashraful Alam", 
-            scholarid: "lWkVCnoAAAAJ",
+            scholarId: "lWkVCnoAAAAJ",
             link: "https://engineering.purdue.edu/ECE/People/ptProfile?resource_id=3171",
             research: "Physics of electronic, optoelectronic, and bioelectronic devices, transport in inhomogeneous systems, reliability limits of CMOS devices, computational modeling"
         },
@@ -703,67 +704,159 @@
         //     }
         // }
 
-        const apiKey = "def8dd319f52a47b8a79db5ed7dd96543aa736cbf434f48a80a224a1ebd967ce";
-
         async function fetchPublications(scholarId) {
     try {
         console.log(`Fetching publications for Scholar ID: ${scholarId}`);
-        
-        // This should call the serverless function you created on Vercel
+
+        // Use a relative path for the API endpoint if hosted on the same Vercel project
         const response = await fetch(`/api/fetchPublications?scholarId=${scholarId}`);
         
+        if (!response.ok) throw new Error(`Error fetching publications: ${response.statusText}`);
+
         const data = await response.json();
-        console.log("Publications fetched:", data.publications);
-        
-        return data.publications || [];
+        console.log("Fetched data from API:", data); // Log the full data object
+
+        if (data.articles) {
+            return data.articles.map(pub => ({
+                title: pub.title,
+                abstract: pub.snippet || "No abstract available.",
+                link: pub.link
+            }));
+        } else {
+            console.warn("No articles found in response:", data);
+            return [];
+        }
     } catch (error) {
         console.error("Error fetching publications:", error);
         return [];
     }
 }
 
+document.getElementById("searchButton").addEventListener("click", async () => {
+    const keyword = document.getElementById("keywordInput").value.toLowerCase();
+    console.log(`Searching publications with keyword: ${keyword}`);
+    
+    const resultsContainer = document.getElementById("results");
+    resultsContainer.innerHTML = "";
 
+    let foundResults = false;
 
-
-async function searchFaculty() {
-    const keyword = document.getElementById('searchInput').value.toLowerCase();
-    const resultsContainer = document.getElementById('results');
-    resultsContainer.innerHTML = '';
-
-    // Fetch and filter publications for all faculty members (bypassing research filter for testing)
     for (let member of facultyMembers) {
-        if (member.scholarId) {
-            const publications = await fetchPublications(member.scholarId);
-            console.log(`Publications for ${member.name}:`, publications);  // Debug: Log all publications for each faculty
+        console.log("Checking faculty member:", member.name);
+        if (!member.scholarId) {
+            console.warn(`Skipping ${member.name} due to missing Scholar ID`);
+            continue;
+        }
 
-            // Filter publications by keyword
-            const filteredPublications = publications.filter(pub => 
-                pub.title.toLowerCase().includes(keyword) || pub.abstract.toLowerCase().includes(keyword)
-            );
-            console.log("Filtered publications:", filteredPublications);  // Debug: Log filtered publications
+        const publications = await fetchPublications(member.scholarId);
+        console.log(`Publications for ${member.name}:`, publications);  // Log each faculty member's publications
 
-            if (filteredPublications.length > 0) {
-                const resultItem = document.createElement('div');
-                resultItem.innerHTML = `<h2>${member.name}</h2>
-                                        <p><a href="${member.link}" target="_blank">Profile</a></p>
-                                        <p>${member.research}</p>`;
+        const filteredPublications = publications.filter(pub => 
+            pub.title.toLowerCase().includes(keyword) || 
+            pub.abstract.toLowerCase().includes(keyword)
+        );
+        console.log("Filtered publications for keyword:", filteredPublications);
 
-                filteredPublications.forEach(pub => {
-                    const pubItem = document.createElement('p');
-                    pubItem.innerHTML = `<strong>${pub.title}</strong><br>${pub.abstract}`;
-                    resultItem.appendChild(pubItem);
-                });
+        if (filteredPublications.length > 0) {
+            foundResults = true;
 
-                resultsContainer.appendChild(resultItem);
-            }
+            const memberHeader = document.createElement("h2");
+            memberHeader.textContent = member.name;
+            resultsContainer.appendChild(memberHeader);
+
+            filteredPublications.forEach(pub => {
+                const pubElement = document.createElement("div");
+                pubElement.classList.add("publication");
+
+                pubElement.innerHTML = `
+                    <h3>${pub.title}</h3>
+                    <p>${pub.abstract}</p>
+                    <a href="${pub.link}" target="_blank">Read More</a>
+                `;
+
+                resultsContainer.appendChild(pubElement);
+            });
         }
     }
 
-    // Display "no results" message if no publications match
-    if (!resultsContainer.innerHTML) {
-        resultsContainer.innerHTML = '<p class="no-results">No matching publications found.</p>';
+    if (!foundResults) {
+        resultsContainer.innerHTML = "<p>No matching publications found for the given keyword.</p>";
     }
-}
+})
+
+// Faculty members search based on research area
+document.getElementById("searchFacultyButton").addEventListener("click", () => {
+    const keyword = document.getElementById("keywordInput").value.toLowerCase();
+    console.log(`Searching faculty members with research keyword: ${keyword}`);
+    
+    const resultsContainer = document.getElementById("results");
+    resultsContainer.innerHTML = "";
+
+    const filteredFaculty = facultyMembers.filter(member =>
+        member.research && member.research.toLowerCase().includes(keyword)
+    );
+    console.log("Filtered faculty members:", filteredFaculty);
+
+    if (filteredFaculty.length > 0) {
+        filteredFaculty.forEach(member => {
+            const memberElement = document.createElement("div");
+            memberElement.classList.add("faculty-member");
+
+            memberElement.innerHTML = `
+                <h2>${member.name}</h2>
+                <p><a href="${member.link}" target="_blank">Profile</a></p>
+                <p>${member.research}</p>
+            `;
+
+            resultsContainer.appendChild(memberElement);
+        });
+    } else {
+        resultsContainer.innerHTML = "<p>No faculty members found for the given research area keyword.</p>";
+    }
+});
+
+
+// async function searchFaculty() {
+//     const keyword = document.getElementById('searchInput').value.toLowerCase();
+//     const resultsContainer = document.getElementById('results');
+//     resultsContainer.innerHTML = '';
+
+//     // Fetch and filter publications for all faculty members (bypassing research filter for testing)
+//     for (let member of facultyMembers) {
+//         if (member.scholarId) {
+//             const publications = await fetchPublications(member.scholarId);
+//             console.log(`Publications for ${member.name}:`, publications);  // Debug: Log all publications for each faculty
+
+//             // Filter publications by keyword
+//             const filteredPublications = publications.filter(pub => 
+//                 pub.title.toLowerCase().includes(keyword) || pub.abstract.toLowerCase().includes(keyword)
+//             );
+//             console.log("Filtered publications:", filteredPublications);  // Debug: Log filtered publications
+
+//             if (filteredPublications.length > 0) {
+//                 const resultItem = document.createElement('div');
+//                 resultItem.innerHTML = `<h2>${member.name}</h2>
+//                                         <p><a href="${member.link}" target="_blank">Profile</a></p>
+//                                         <p>${member.research}</p>`;
+
+//                 filteredPublications.forEach(pub => {
+//                     const pubItem = document.createElement('p');
+//                     pubItem.innerHTML = `<strong>${pub.title}</strong><br>${pub.abstract}`;
+//                     resultItem.appendChild(pubItem);
+//                 });
+
+//                 resultsContainer.appendChild(resultItem);
+//             }
+//         }
+//     }
+
+//     // Display "no results" message if no publications match
+//     if (!resultsContainer.innerHTML) {
+//         resultsContainer.innerHTML = '<p class="no-results">No matching publications found.</p>';
+//     }
+// }
+
+
 
 async function testFetchPublications() {
     const scholarId = "lWkVCnoAAAAJ";  // Replace with a known scholarId that should work
