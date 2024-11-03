@@ -734,7 +734,7 @@
 
 document.getElementById("searchButton").addEventListener("click", async () => {
     const keyword = document.getElementById("keywordInput").value.toLowerCase();
-    console.log(`Searching publications with keyword: ${keyword}`);
+    console.log(`Searching publications with keyword: "${keyword}"`);
     
     const resultsContainer = document.getElementById("results");
     resultsContainer.innerHTML = "";
@@ -749,13 +749,21 @@ document.getElementById("searchButton").addEventListener("click", async () => {
         }
 
         const publications = await fetchPublications(member.scholarId);
-        console.log(`Publications for ${member.name}:`, publications);  // Log each faculty member's publications
+        console.log(`Fetched publications for ${member.name}:`, publications);
 
-        const filteredPublications = publications.filter(pub => 
-            pub.title.toLowerCase().includes(keyword) || 
-            pub.abstract.toLowerCase().includes(keyword)
-        );
-        console.log("Filtered publications for keyword:", filteredPublications);
+        // Check if publications are in expected format before filtering
+        const filteredPublications = publications.filter(pub => {
+            const title = pub.title ? pub.title.toLowerCase() : "";
+            const abstract = pub.abstract ? pub.abstract.toLowerCase() : "";
+            const matchesKeyword = title.includes(keyword) || abstract.includes(keyword);
+
+            if (matchesKeyword) {
+                console.log(`Match found in publication: "${pub.title}"`);
+            }
+            return matchesKeyword;
+        });
+        
+        console.log(`Filtered publications for ${member.name} with keyword "${keyword}":`, filteredPublications);
 
         if (filteredPublications.length > 0) {
             foundResults = true;
@@ -783,6 +791,7 @@ document.getElementById("searchButton").addEventListener("click", async () => {
         resultsContainer.innerHTML = "<p>No matching publications found for the given keyword.</p>";
     }
 })
+
 
 // Faculty members search based on research area
 document.getElementById("searchFacultyButton").addEventListener("click", () => {
