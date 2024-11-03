@@ -1,29 +1,27 @@
-export default async function handler(req, res) {
-    // Get scholarId from the query parameters
-    const { scholarId } = req.query;
 
-    // Check if scholarId is provided
-    if (!scholarId) {
-        return res.status(400).json({ error: 'Scholar ID is required' });
+
+export default async function handler(req, res) {
+    // Set CORS headers to allow requests from your frontend origin
+    res.setHeader('Access-Control-Allow-Origin', '*'); // Use * to allow all origins or specify your frontend URL for more security
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+    // Handle preflight OPTIONS request
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
     }
 
     try {
-        // Fetch data from SerpAPI
-        const response = await fetch(`https://serpapi.com/search.json?engine=google_scholar_author&author_id=${scholarId}&api_key=${process.env.API_KEY}`);
-        
-        // Check if the response is OK (status 200)
-        if (!response.ok) {
-            throw new Error(`Failed to fetch data from SerpAPI: ${response.statusText}`);
-        }
+        const scholarId = req.query.scholarId;
+        const apiKey = process.env.SERPAPI_KEY; // Make sure the environment variable is correctly set in Vercel
 
-        // Parse the JSON data from the response
+        const response = await fetch(`https://serpapi.com/search.json?engine=google_scholar_author&author_id=${scholarId}&api_key=${apiKey}&hl=en`);
         const data = await response.json();
-        
-        // Send the fetched data back as JSON
+
         res.status(200).json(data);
     } catch (error) {
-        // Handle any errors by sending a 500 response
-        console.error("Error in fetchPublications API:", error);
-        res.status(500).json({ error: 'Failed to fetch data from SerpAPI' });
+        console.error("Error fetching publications:", error);
+        res.status(500).json({ error: "Error fetching publications" });
     }
 }
