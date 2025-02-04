@@ -19,7 +19,7 @@ export default async function handler(req, res) {
         const html = await response.text();
 
         // You will need to parse the HTML to extract publication data
-        const publications = extractPublications(html);
+        //const publications = extractPublications(html);
 
         res.status(200).json({ scholarId, publications });
     } catch (error) {
