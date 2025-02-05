@@ -93,7 +93,7 @@
     <div class="search-container">
         <input type="text" id="keywordInput" placeholder="Enter research keyword">
         <button id="searchButton">Search Publications</button>
-        <!-- <button onclick="testFetchPublications()">Test API Call</button> -->
+        <button onclick="testFetchPublications()">Test API Call</button>
         <button id="searchFacultyButton">Search Faculty</button>
 
     </div>
@@ -740,7 +740,7 @@
         //     }
         // }
 
-        async function fetchPublications(scholarId) {
+    async function fetchPublications(scholarId) {
     try {
         console.log(`Fetching publications for Scholar ID: ${scholarId}`);
         const response = await fetch(`https://faculty-search-tool.vercel.app/api/fetchPublications?scholarId=${scholarId}`);
