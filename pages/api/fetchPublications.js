@@ -8,27 +8,33 @@ export default async function handler(req, res) {
         return;
     }
 
+    // try {
+    //     const scholarId = req.query.scholarId;
+    //     const apiKey = process.env.SCRAPERAPI_KEY; 
+
+    //     if (!apiKey) {
+    //         throw new Error("Missing ScraperAPI Key");
+    //     }
+
+    //     const targetUrl = `https://scholar.google.com/citations?user=${scholarId}&hl=en`;
+
+    //     // Fetch with ScraperAPI
+    //     const response = await fetch(`https://api.scraperapi.com/?api_key=${apiKey}&render=true&url=${encodeURIComponent(targetUrl)}`);
+
+    //     if (!response.ok) {
+    //         throw new Error(`ScraperAPI Error: ${response.status} - ${await response.text()}`);
+    //     }
+
+    //     const html = await response.text();
     try {
         const scholarId = req.query.scholarId;
-        const apiKey = process.env.SCRAPERAPI_KEY; 
+        const apiKey = process.env.SERPAPI_KEY; 
 
-        if (!apiKey) {
-            throw new Error("Missing ScraperAPI Key");
-        }
-
-        const targetUrl = `https://scholar.google.com/citations?user=${scholarId}&hl=en`;
-
-        // Fetch with ScraperAPI
-        const response = await fetch(`https://api.scraperapi.com/?api_key=${apiKey}&render=true&url=${encodeURIComponent(targetUrl)}`);
-
-        if (!response.ok) {
-            throw new Error(`ScraperAPI Error: ${response.status} - ${await response.text()}`);
-        }
-
-        const html = await response.text();
+        const response = await fetch('https://serpapi.com/search.json?engine=google_scholar_author&author_id=${scholarId}&api_key=${apiKey}&hl=en');
+        const data = await response.json();
 
         // Extract publications from HTML
-        const publications = extractPublications(html);
+       // const publications = extractPublications(html);
 
         res.status(200).json({ scholarId, publications });
     } catch (error) {
@@ -38,14 +44,14 @@ export default async function handler(req, res) {
 }
 
 // Extract publication titles from Google Scholar HTML
-function extractPublications(html) {
-    const publications = [];
-    const regex = /<a href="\/citations\?view_op=view_citation&amp;.*?">(.*?)<\/a>/g;
-    let match;
+// function extractPublications(html) {
+//     const publications = [];
+//     const regex = /<a href="\/citations\?view_op=view_citation&amp;.*?">(.*?)<\/a>/g;
+//     let match;
 
-    while ((match = regex.exec(html)) !== null) {
-        publications.push({ title: match[1] });
-    }
+//     while ((match = regex.exec(html)) !== null) {
+//         publications.push({ title: match[1] });
+//     }
 
-    return publications.length ? publications : [{ title: "No publications found" }];
-}
+//     return publications.length ? publications : [{ title: "No publications found" }];
+// }
