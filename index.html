@@ -86,6 +86,21 @@
             text-align: center;
             margin-top: 20px;
         }
+        .loader {
+            border: 12px solid #f3f3f3; /* Light grey */
+            border-top: 12px solid #007bff; /* Blue */
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none; /* Hidden by default */
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
@@ -97,6 +112,7 @@
         <button id="searchFacultyButton">Search Faculty</button>
 
     </div>
+    <div id="loader" class="loader"></div>
     
     <div id="results"></div>
 
@@ -766,38 +782,36 @@
     }
 }
 
-document.getElementById("searchButton").addEventListener("click", async () => {
-    const keyword = document.getElementById("keywordInput").value.toLowerCase();
-    console.log(`Searching publications with keyword: "${keyword}"`);
-    
-    const resultsContainer = document.getElementById("results");
-    resultsContainer.innerHTML = "";
+    document.getElementById("searchButton").addEventListener("click", async () => {
+        const keyword = document.getElementById("keywordInput").value;
+        const resultsContainer = document.getElementById("results");
+        resultsContainer.innerHTML = "";
 
-    let foundResults = false;
-
-    for (let member of facultyMembers) {
-        console.log("Checking faculty member:", member.name);
-        if (!member.scholarId) {
-            console.warn(`Skipping ${member.name} due to missing Scholar ID`);
-            continue;
+        if (!keyword.trim()) {
+            resultsContainer.innerHTML = "<p>Please enter a keyword.</p>";
+            return;
         }
 
-        const publications = await fetchPublications(member.scholarId);
-        //console.log(`Fetched publications for ${member.name}:`, publications);
-        const filteredPublications = publications.filter(pub => {
-            const title = pub.title ? pub.title.toLowerCase() : "";
-            const abstract = pub.abstract ? pub.abstract.toLowerCase() : "";
-            const matchesKeyword = title.includes(keyword) || abstract.includes(keyword);
+        // Show spinner
+        showLoader();
 
-            if (matchesKeyword) {
-                //console.log(`Match found in publication: "${pub.title}"`);
-            }
-            return matchesKeyword;
-        });
-        
-        console.log(`Filtered publications for ${member.name} with keyword "${keyword}":`, filteredPublications);
+        let foundResults = false;
 
-        if (filteredPublications.length > 0) {
+        // Search across all faculty with a scholarId
+        for (let member of facultyMembers) {
+            if (!member.scholarId) continue;
+
+            // Fetch publications
+            const publications = await fetchPublications(member.scholarId);
+
+            // Filter them using partial matching
+            const filteredPublications = publications.filter(pub => {
+            const title = pub.title || "";
+            const abstract = pub.abstract || "";
+            return partialMatch(title, keyword) || partialMatch(abstract, keyword);
+            });
+
+            if (filteredPublications.length > 0) {
             foundResults = true;
 
             const memberHeader = document.createElement("h2");
@@ -807,53 +821,60 @@ document.getElementById("searchButton").addEventListener("click", async () => {
             filteredPublications.forEach(pub => {
                 const pubElement = document.createElement("div");
                 pubElement.classList.add("publication");
-
                 pubElement.innerHTML = `
-                    <h3>${pub.title}</h3>
-                    <p>${pub.abstract}</p>
-                    <a href="${pub.link}" target="_blank">Read More</a>
+                <h3>${pub.title}</h3>
+                <p>${pub.abstract}</p>
+                <a href="${pub.link}" target="_blank">Read More</a>
                 `;
-
                 resultsContainer.appendChild(pubElement);
             });
+            }
         }
-    }
 
-    if (!foundResults) {
-        resultsContainer.innerHTML = "<p>No matching publications found for the given keyword.</p>";
-    }
-})
+        if (!foundResults) {
+            resultsContainer.innerHTML = "<p>No matching publications found for the given keyword.</p>";
+        }
 
-
-document.getElementById("searchFacultyButton").addEventListener("click", () => {
-    const keyword = document.getElementById("keywordInput").value.toLowerCase();
-    console.log(`Searching faculty members with research keyword: ${keyword}`);
-    
-    const resultsContainer = document.getElementById("results");
-    resultsContainer.innerHTML = "";
-
-    const filteredFaculty = facultyMembers.filter(member =>
-        member.research && member.research.toLowerCase().includes(keyword)
-    );
-    console.log("Filtered faculty members:", filteredFaculty);
-
-    if (filteredFaculty.length > 0) {
-        filteredFaculty.forEach(member => {
-            const memberElement = document.createElement("div");
-            memberElement.classList.add("faculty-member");
-
-            memberElement.innerHTML = `
-                <h2>${member.name}</h2>
-                <p><a href="${member.link}" target="_blank">Profile</a></p>
-                <p>${member.research}</p>
-            `;
-
-            resultsContainer.appendChild(memberElement);
+        // Hide spinner
+        hideLoader();
         });
-    } else {
+
+
+    document.getElementById("searchFacultyButton").addEventListener("click", () => {
+      const keyword = document.getElementById("keywordInput").value;
+      const resultsContainer = document.getElementById("results");
+      resultsContainer.innerHTML = "";
+
+      if (!keyword.trim()) {
+        resultsContainer.innerHTML = "<p>Please enter a keyword.</p>";
+        return;
+      }
+
+      showLoader();
+
+      // Filter faculty by partial match on their research area
+      const filteredFaculty = facultyMembers.filter(member => {
+        if (!member.research) return false;
+        return partialMatch(member.research, keyword);
+      });
+
+      if (filteredFaculty.length > 0) {
+        filteredFaculty.forEach(member => {
+          const memberElement = document.createElement("div");
+          memberElement.classList.add("faculty-member");
+          memberElement.innerHTML = `
+            <h2>${member.name}</h2>
+            <p><a href="${member.link}" target="_blank">Profile</a></p>
+            <p>${member.research}</p>
+          `;
+          resultsContainer.appendChild(memberElement);
+        });
+      } else {
         resultsContainer.innerHTML = "<p>No faculty members found for the given research area keyword.</p>";
-    }
-});
+      }
+
+      hideLoader();
+    });
 
 
 // async function searchFaculty() {
@@ -905,6 +926,13 @@ async function testFetchPublications() {
     console.log("Publications fetched:", publications);
 }
 
+function showLoader() {
+      document.getElementById('loader').style.display = 'block';
+    }
+
+function hideLoader() {
+      document.getElementById('loader').style.display = 'none';
+}
 
     </script>
 </body>
