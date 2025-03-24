@@ -780,7 +780,25 @@
         console.error("Error fetching publications:", error);
         return [];
     }
-}
+    }
+    function getPartialKeyword(keyword) {
+      let kw = keyword.toLowerCase().trim();
+      if (kw.length >= 6) {
+        // e.g. "security" (length=8) => "secur" (first 5 chars)
+        // "computers" => "compu" (first 5 chars)
+        // Adjust as needed:
+        return kw.substring(0, kw.length - 3); 
+      } 
+      return kw;  // For shorter words, use the entire word
+    }
+
+    /**
+     * Helper: Check if text includes a partial match of the keyword
+     */
+    function partialMatch(text, keyword) {
+      const partial = getPartialKeyword(keyword);
+      return text.toLowerCase().includes(partial);
+    }
 
     document.getElementById("searchButton").addEventListener("click", async () => {
         const keyword = document.getElementById("keywordInput").value;
