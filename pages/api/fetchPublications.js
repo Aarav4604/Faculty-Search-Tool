@@ -68,13 +68,19 @@ export default async function handler(req, res) {
       const venueYear = $('.gs_gray', el).last().text().trim();
       const citedBy = $('.gsc_a_ac', el).text().trim();
       
-      if (title) {
+      // Extract year and filter for publications from 2019 or later
+      const yearMatch = venueYear.match(/\d{4}/);
+      const year = yearMatch ? yearMatch[0] : '';
+      const yearNum = parseInt(year, 10);
+      
+      // Only include publications from 2019 or later
+      if (title && yearNum >= 2019) {
         publications.push({
           title,
           link,
           authors: authors.split(',').map(a => a.trim()),
           venue: venueYear.split(',').slice(0, -1).join(',').trim(),
-          year: venueYear.match(/\d{4}/) ? venueYear.match(/\d{4}/)[0] : '',
+          year,
           citedBy: citedBy && !isNaN(parseInt(citedBy)) ? parseInt(citedBy) : 0
         });
       }
@@ -123,16 +129,27 @@ async function useSerperFallback(req, res, scholarId) {
   let publications = [];
   
   if (Array.isArray(json.organic) && json.organic.length) {
-    publications = json.organic.map(item => ({
-      title: item.title,
-      link: item.link,
-      snippet: item.snippet || '',
-      authors: item.authors || [],
-      venue: item.publicationInfo || '',
-      year: item.year || '',
-      citedBy: item.citedBy ? parseInt(item.citedBy, 10) : 0
-    }));
-    console.log('← publications from serper.dev:', publications.length);
+    publications = json.organic
+      .map(item => {
+        const year = item.year || '';
+        const yearNum = parseInt(year, 10);
+        
+        // Only include publications from 2019 or later
+        if (isNaN(yearNum) || yearNum < 2019) return null;
+        
+        return {
+          title: item.title,
+          link: item.link,
+          snippet: item.snippet || '',
+          authors: item.authors || [],
+          venue: item.publicationInfo || '',
+          year,
+          citedBy: item.citedBy ? parseInt(item.citedBy, 10) : 0
+        };
+      })
+      .filter(item => item !== null);
+    
+    console.log('← publications from serper.dev (2019+ only):', publications.length);
   } else {
     console.log('← no results from serper.dev fallback');
   }
