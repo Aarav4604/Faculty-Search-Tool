@@ -1,11 +1,16 @@
 {
-    "version": 2,
-    "builds": [
-      { "src": "pages/api/*.js", "use": "@vercel/node" },
-      { "src": "index.html", "use": "@vercel/static" }
-    ],
-    "routes": [
-      { "src": "/api/(.*)", "dest": "/pages/api/$1.js" }
-    ]
-  }
-  
+  "version": 2,
+  "builds": [
+    { "src": "package.json", "use": "@vercel/next" }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      }
+    }
+  ]
+}
