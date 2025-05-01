@@ -42,7 +42,6 @@ export default async function handler(req, res) {
     const directUrl = `https://scholar.google.com/citations?hl=en&user=${scholarId}&view_op=list_works&sortby=pubdate&pagesize=100`;
     console.log(`→ fetching from Scholar: ${directUrl}`);
     
-    // Use very simple basic headers like a regular browser would
     const directResp = await fetch(directUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
@@ -155,15 +154,8 @@ async function useSerperFallback(req, res, scholarId) {
     console.log('← no results from serper.dev fallback');
   }
   
-  // Store in cache
-  publicationCache.set(scholarId, {
-    timestamp: Date.now(),
-    data: publications
-  });
-  
   return res.status(200).json({ 
     publications,
-    total: publications.length,
-    source: 'serper'
+    total: publications.length
   });
 }
