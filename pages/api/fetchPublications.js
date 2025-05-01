@@ -1,8 +1,21 @@
 import * as cheerio from 'cheerio';
 
-// Example using Vercel KV (Redis) for persistent caching
-// You'll need to install: npm install @vercel/kv
-import { kv } from '@vercel/kv';
+// Import Vercel KV with fallback to memory cache if KV is not available
+let kv;
+let useMemoryCache = false;
+const memoryCache = new Map();
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
+try {
+  // Try to import Vercel KV
+  const vercelKV = require('@vercel/kv');
+  kv = vercelKV;
+  console.log('→ Using Vercel KV for cache');
+} catch (error) {
+  // Fall back to memory cache if Vercel KV is not available
+  useMemoryCache = true;
+  console.log('→ Vercel KV not available, using memory cache instead');
+}
 
 export default async function handler(req, res) {
   console.log('→ handler start', req.method, req.query);
@@ -24,24 +37,42 @@ export default async function handler(req, res) {
   try {
     const scholarId = req.query.scholarId;
     const bypassCache = req.query.bypassCache === 'true';
+    const method = req.query.method || 'auto'; // 'direct', 'serper', or 'auto'
+    
     console.log('→ scholarId is', scholarId);
     
     if (!scholarId) {
       return res.status(400).json({ error: 'Missing scholarId' });
     }
     
-    // Check Redis cache first (unless bypassing)
     const cacheKey = `scholar:${scholarId}`;
+    let cachedData = null;
+    
+    // Check cache first (unless bypassing)
     if (!bypassCache) {
       try {
-        const cachedData = await kv.get(cacheKey);
+        if (useMemoryCache) {
+          // Use memory cache
+          if (memoryCache.has(cacheKey)) {
+            cachedData = memoryCache.get(cacheKey);
+            if (Date.now() - cachedData.timestamp > CACHE_TTL) {
+              // Cache expired
+              cachedData = null;
+            }
+          }
+        } else {
+          // Use Vercel KV
+          cachedData = await kv.get(cacheKey);
+        }
+        
         if (cachedData) {
           console.log('← returning cached publications:', cachedData.publications.length);
           return res.status(200).json({ 
             publications: cachedData.publications,
             total: cachedData.publications.length,
             cached: true,
-            cachedAt: cachedData.timestamp
+            cachedAt: cachedData.timestamp,
+            cacheType: useMemoryCache ? 'memory' : 'vercel-kv'
           });
         }
       } catch (cacheError) {
@@ -50,18 +81,64 @@ export default async function handler(req, res) {
       }
     }
     
-    // Skip direct Google Scholar altogether and use Serper.dev immediately
-    console.log('→ Fetching from Serper.dev directly');
-    const publications = await fetchFromSerper(scholarId);
-    console.log(`← Retrieved ${publications.length} publications from Serper`);
+    let publications = [];
+    let source = '';
     
-    // Store in Redis cache with 24-hour expiration
-    const ONE_DAY_IN_SECONDS = 24 * 60 * 60;
+    // Try methods based on the requested method or auto fallback
+    if (method === 'direct' || method === 'auto') {
+      try {
+        console.log('→ Attempting direct Google Scholar fetch');
+        publications = await fetchFromGoogleScholar(scholarId);
+        source = 'direct';
+        console.log(`← Direct method succeeded with ${publications.length} publications`);
+      } catch (error) {
+        console.log(`← Direct method failed: ${error.message}`);
+        if (method === 'direct') {
+          return res.status(500).json({ error: `Direct method failed: ${error.message}` });
+        }
+        // Auto mode will continue to serper
+      }
+    }
+    
+    // Try Serper if direct failed or was skipped
+    if ((method === 'auto' && publications.length === 0) || method === 'serper') {
+      try {
+        console.log('→ Attempting Serper API fetch');
+        publications = await fetchFromSerper(scholarId);
+        source = 'serper';
+        console.log(`← Serper method succeeded with ${publications.length} publications`);
+      } catch (error) {
+        console.log(`← Serper method failed: ${error.message}`);
+        if (method === 'serper') {
+          return res.status(500).json({ error: `Serper method failed: ${error.message}` });
+        }
+      }
+    }
+    
+    // If both methods failed
+    if (publications.length === 0) {
+      return res.status(404).json({ 
+        error: 'No publications found or all methods failed'
+      });
+    }
+    
+    // Store successful result in cache
+    const cacheData = {
+      timestamp: Date.now(),
+      publications
+    };
+    
     try {
-      await kv.set(cacheKey, {
-        timestamp: Date.now(),
-        publications
-      }, { ex: ONE_DAY_IN_SECONDS });
+      if (useMemoryCache) {
+        // Store in memory cache
+        memoryCache.set(cacheKey, cacheData);
+        console.log('← Stored in memory cache');
+      } else {
+        // Store in Vercel KV with 24-hour expiration
+        const ONE_DAY_IN_SECONDS = 24 * 60 * 60;
+        await kv.set(cacheKey, cacheData, { ex: ONE_DAY_IN_SECONDS });
+        console.log('← Stored in Vercel KV cache');
+      }
     } catch (cacheError) {
       console.error('← cache set error:', cacheError);
       // Continue even if cache save fails
@@ -70,12 +147,78 @@ export default async function handler(req, res) {
     return res.status(200).json({ 
       publications,
       total: publications.length,
-      source: 'serper'
+      source
     });
+    
   } catch (err) {
     console.error('← handler error:', err);
     return res.status(500).json({ error: err.message });
   }
+}
+
+async function fetchFromGoogleScholar(scholarId) {
+  // Use a randomized delay to avoid detection patterns (1-3 seconds)
+  const randomDelay = Math.floor(Math.random() * 2000) + 1000;
+  await new Promise(resolve => setTimeout(resolve, randomDelay));
+  
+  const directUrl = `https://scholar.google.com/citations?hl=en&user=${scholarId}&view_op=list_works&sortby=pubdate&pagesize=100`;
+  console.log(`→ fetching from Scholar: ${directUrl}`);
+  
+  // Use very simple browser-like headers that don't trigger anti-bot detection
+  const directResp = await fetch(directUrl, {
+    headers: {
+      // Use a common browser user-agent
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml',
+      'Accept-Language': 'en-US,en;q=0.9',
+      // Referer can help make the request look more legitimate
+      'Referer': 'https://scholar.google.com/'
+    }
+  });
+  
+  if (!directResp.ok) {
+    throw new Error(`Google Scholar request failed with status: ${directResp.status}`);
+  }
+  
+  const html = await directResp.text();
+  
+  // Check if we got a captcha or error page
+  if (html.includes('Our systems have detected unusual traffic') || 
+      html.includes('recaptcha') ||
+      html.includes('robot')) {
+    throw new Error('Google Scholar showing captcha or detected automation');
+  }
+  
+  const $ = cheerio.load(html);
+  let publications = [];
+  
+  $('tr.gsc_a_tr').each((_, el) => {
+    const title = $('.gsc_a_at', el).text().trim();
+    const partialLink = $('.gsc_a_at', el).attr('data-href') || $('.gsc_a_at', el).attr('href');
+    const link = partialLink ? 'https://scholar.google.com' + partialLink : '';
+    const authors = $('.gs_gray', el).first().text().trim();
+    const venueYear = $('.gs_gray', el).last().text().trim();
+    const citedBy = $('.gsc_a_ac', el).text().trim();
+    
+    // Extract year and filter for publications from 2019 or later
+    const yearMatch = venueYear.match(/\d{4}/);
+    const year = yearMatch ? yearMatch[0] : '';
+    const yearNum = parseInt(year, 10);
+    
+    // Only include publications from 2019 or later
+    if (title && yearNum >= 2019) {
+      publications.push({
+        title,
+        link,
+        authors: authors.split(',').map(a => a.trim()),
+        venue: venueYear.split(',').slice(0, -1).join(',').trim(),
+        year,
+        citedBy: citedBy && !isNaN(parseInt(citedBy)) ? parseInt(citedBy) : 0
+      });
+    }
+  });
+  
+  return publications;
 }
 
 async function fetchFromSerper(scholarId) {
@@ -95,6 +238,11 @@ async function fetchFromSerper(scholarId) {
   // Try each query and combine results
   for (const query of queries) {
     try {
+      // Add a small delay between queries to avoid rate limiting
+      if (queries.indexOf(query) > 0) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
       console.log(`→ Sending Serper query: ${query}`);
       
       const resp = await fetch('https://google.serper.dev/scholar', {
@@ -156,12 +304,6 @@ async function fetchFromSerper(scholarId) {
   );
   
   console.log(`Found ${uniquePublications.length} unique publications from Serper`);
-  
-  if (uniquePublications.length === 0) {
-    // Return empty array instead of throwing error
-    console.log('No publications found via Serper API');
-    return [];
-  }
   
   return uniquePublications;
 }
