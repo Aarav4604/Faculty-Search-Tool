@@ -1,25 +1,21 @@
 import * as cheerio from 'cheerio';
 
-// Use persistent cache with Redis or similar for Vercel serverless environment
-// For this example, we'll still use memory cache but with better error handling
+// Simple cache to avoid repeated requests
 const publicationCache = new Map();
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 export default async function handler(req, res) {
   console.log('→ handler start', req.method, req.query);
   
-  // Handle CORS preflight
+  // Handle CORS
   if (req.method === 'OPTIONS') {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-    console.log('← preflight responded');
     return res.status(200).end();
   }
   
-  // Method check
   if (req.method !== 'GET') {
-    console.log('← wrong method, bailing');
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
   
@@ -27,15 +23,16 @@ export default async function handler(req, res) {
   
   try {
     const scholarId = req.query.scholarId;
+    const bypassCache = req.query.bypassCache === 'true';
     console.log('→ scholarId is', scholarId);
     
     if (!scholarId) {
       return res.status(400).json({ error: 'Missing scholarId' });
     }
     
-    // Check cache first
+    // Check cache first (unless bypassing)
     const cacheKey = scholarId;
-    if (publicationCache.has(cacheKey)) {
+    if (!bypassCache && publicationCache.has(cacheKey)) {
       const cachedData = publicationCache.get(cacheKey);
       if (Date.now() - cachedData.timestamp < CACHE_TTL) {
         console.log('← returning cached publications:', cachedData.data.length);
@@ -47,70 +44,79 @@ export default async function handler(req, res) {
       }
     }
     
-    let publications = [];
-    let source = 'direct';
-    
+    // Try direct Google Scholar with an extremely simple approach
     try {
-      publications = await fetchFromGoogleScholar(scholarId);
-    } catch (error) {
-      console.log(`← Error fetching from Google Scholar: ${error.message}`);
+      console.log('→ Attempting simple fetch from Google Scholar');
+      const publications = await fetchFromGoogleScholarSimple(scholarId);
+      console.log(`← Retrieved ${publications.length} publications`);
       
-      // Try the fallback immediately if direct Scholar fails
+      // Store in cache
+      publicationCache.set(cacheKey, {
+        timestamp: Date.now(),
+        data: publications
+      });
+      
+      return res.status(200).json({ 
+        publications,
+        total: publications.length,
+        source: 'direct'
+      });
+    } catch (error) {
+      console.error(`← Error fetching from Google Scholar: ${error.message}`);
+      
+      // Return what we have from Serper if available
       try {
-        publications = await useSerperFallback(scholarId);
-        source = 'serper';
+        console.log('→ Falling back to Serper API');
+        if (!process.env.SERPER_API_KEY) {
+          throw new Error('Missing SERPER_API_KEY');
+        }
+        
+        const publications = await useSerperFallback(scholarId);
+        console.log(`← Retrieved ${publications.length} publications from Serper`);
+        
+        // Store in cache
+        publicationCache.set(cacheKey, {
+          timestamp: Date.now(),
+          data: publications
+        });
+        
+        return res.status(200).json({ 
+          publications,
+          total: publications.length,
+          source: 'serper'
+        });
       } catch (serperError) {
         console.error(`← Serper fallback also failed: ${serperError.message}`);
-        return res.status(500).json({ 
+        
+        // If nothing worked, return an empty array but don't throw an error
+        return res.status(200).json({ 
+          publications: [],
+          total: 0,
           error: 'Both direct and fallback methods failed',
           directError: error.message,
           serperError: serperError.message
         });
       }
     }
-    
-    console.log(`← publications retrieved from ${source}:`, publications.length);
-    
-    // Store in cache
-    publicationCache.set(cacheKey, {
-      timestamp: Date.now(),
-      data: publications
-    });
-    
-    return res.status(200).json({ 
-      publications,
-      total: publications.length,
-      source
-    });
-    
   } catch (err) {
     console.error('← handler error:', err);
     return res.status(500).json({ error: err.message });
   }
 }
 
-async function fetchFromGoogleScholar(scholarId) {
-  // More robust Google Scholar direct fetch with retry mechanism
-  const directUrl = `https://scholar.google.com/citations?hl=en&user=${scholarId}&view_op=list_works&sortby=pubdate&pagesize=100`;
-  console.log(`→ fetching from Scholar: ${directUrl}`);
+async function fetchFromGoogleScholarSimple(scholarId) {
+  // This is the most basic approach possible
+  const url = `https://scholar.google.com/citations?hl=en&user=${scholarId}&view_op=list_works&sortby=pubdate&pagesize=100`;
   
-  const headers = {
-    // More realistic user agent
-    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Cache-Control': 'no-cache',
-    'Pragma': 'no-cache',
-    'sec-ch-ua': '"Google Chrome";v="115", "Chromium";v="115"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"macOS"',
-    'Referer': 'https://scholar.google.com/',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin'
-  };
-  
-  const response = await fetch(directUrl, { headers });
+  // Extremely simple headers - just like a normal browser request
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.5'
+    }
+  });
   
   if (!response.ok) {
     throw new Error(`Google Scholar request failed with status: ${response.status}`);
@@ -118,7 +124,7 @@ async function fetchFromGoogleScholar(scholarId) {
   
   const html = await response.text();
   
-  // Check if we got a captcha or error page
+  // Check if we got a captcha page
   if (html.includes('Our systems have detected unusual traffic') || 
       html.includes('recaptcha') ||
       html.includes('robot')) {
@@ -127,11 +133,6 @@ async function fetchFromGoogleScholar(scholarId) {
   
   const $ = cheerio.load(html);
   let publications = [];
-  
-  // Check if we actually got results
-  if ($('tr.gsc_a_tr').length === 0) {
-    console.log('No publication elements found, might be an error page or format change');
-  }
   
   $('tr.gsc_a_tr').each((_, el) => {
     const title = $('.gsc_a_at', el).text().trim();
@@ -164,15 +165,13 @@ async function fetchFromGoogleScholar(scholarId) {
 
 async function useSerperFallback(scholarId) {
   const apiKey = process.env.SERPER_API_KEY;
-  console.log('→ SERPER_API_KEY present?', Boolean(apiKey));
   
   if (!apiKey) {
     throw new Error('Missing SERPER_API_KEY');
   }
   
-  // Build a better query with author: prefix
+  // Simple query
   const searchQuery = `author:${scholarId}`;
-  console.log('→ falling back to serper.dev with query:', searchQuery);
   
   const resp = await fetch('https://google.serper.dev/scholar', {
     method: 'POST',
@@ -180,21 +179,18 @@ async function useSerperFallback(scholarId) {
       'Content-Type': 'application/json',
       'X-API-KEY': apiKey
     },
-    body: JSON.stringify({ q: searchQuery, num: 100 }) // Get max results
+    body: JSON.stringify({ q: searchQuery })
   });
   
   if (!resp.ok) {
     throw new Error(`Serper API request failed with status: ${resp.status}`);
   }
   
-  console.log('← serper.dev status', resp.status);
   const json = await resp.json();
   
   if (!json || typeof json !== 'object') {
     throw new Error('Invalid response from Serper API');
   }
-  
-  console.log('← got JSON keys:', Object.keys(json));
   
   let publications = [];
   
@@ -218,10 +214,6 @@ async function useSerperFallback(scholarId) {
         };
       })
       .filter(item => item !== null);
-    
-    console.log('← publications from serper.dev (2019+ only):', publications.length);
-  } else {
-    console.log('← no results from serper.dev fallback');
   }
   
   return publications;
