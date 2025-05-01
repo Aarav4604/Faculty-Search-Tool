@@ -1,8 +1,8 @@
 import * as cheerio from 'cheerio';
 
-// Simple cache - will be reset on serverless function restarts
-const publicationCache = new Map();
-const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+// Example using Vercel KV (Redis) for persistent caching
+// You'll need to install: npm install @vercel/kv
+import { kv } from '@vercel/kv';
 
 export default async function handler(req, res) {
   console.log('→ handler start', req.method, req.query);
@@ -30,17 +30,23 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing scholarId' });
     }
     
-    // Check cache first (unless bypassing)
-    const cacheKey = scholarId;
-    if (!bypassCache && publicationCache.has(cacheKey)) {
-      const cachedData = publicationCache.get(cacheKey);
-      if (Date.now() - cachedData.timestamp < CACHE_TTL) {
-        console.log('← returning cached publications:', cachedData.data.length);
-        return res.status(200).json({ 
-          publications: cachedData.data,
-          total: cachedData.data.length,
-          cached: true
-        });
+    // Check Redis cache first (unless bypassing)
+    const cacheKey = `scholar:${scholarId}`;
+    if (!bypassCache) {
+      try {
+        const cachedData = await kv.get(cacheKey);
+        if (cachedData) {
+          console.log('← returning cached publications:', cachedData.publications.length);
+          return res.status(200).json({ 
+            publications: cachedData.publications,
+            total: cachedData.publications.length,
+            cached: true,
+            cachedAt: cachedData.timestamp
+          });
+        }
+      } catch (cacheError) {
+        console.error('← cache error:', cacheError);
+        // Continue with API call if cache fails
       }
     }
     
@@ -49,11 +55,17 @@ export default async function handler(req, res) {
     const publications = await fetchFromSerper(scholarId);
     console.log(`← Retrieved ${publications.length} publications from Serper`);
     
-    // Store in cache
-    publicationCache.set(cacheKey, {
-      timestamp: Date.now(),
-      data: publications
-    });
+    // Store in Redis cache with 24-hour expiration
+    const ONE_DAY_IN_SECONDS = 24 * 60 * 60;
+    try {
+      await kv.set(cacheKey, {
+        timestamp: Date.now(),
+        publications
+      }, { ex: ONE_DAY_IN_SECONDS });
+    } catch (cacheError) {
+      console.error('← cache set error:', cacheError);
+      // Continue even if cache save fails
+    }
     
     return res.status(200).json({ 
       publications,
@@ -73,7 +85,6 @@ async function fetchFromSerper(scholarId) {
   }
   
   // Try different query formats to get better results
-  // This helps ensure we get the most relevant results
   const queries = [
     `author:${scholarId}`,
     `"user=${scholarId}" site:scholar.google.com`
