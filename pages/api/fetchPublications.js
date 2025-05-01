@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 
-// Simple cache to avoid repeated requests for the same scholar ID
+// Simple cache to avoid repeated requests
 const publicationCache = new Map();
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -39,81 +39,65 @@ export default async function handler(req, res) {
       }
     }
     
-    // Always go directly to Google Scholar with improved headers
-    const directUrl = `https://scholar.google.com/citations?hl=en&user=${scholarId}&view_op=list_works&sortby=pubdate&pagesize=100`;
-    console.log(`→ fetching from Scholar: ${directUrl}`);
+    // Use Semantic Scholar API instead of Google Scholar
+    // This is more reliable and doesn't have strict blocking measures
+    console.log('→ fetching from Semantic Scholar API');
     
-    const directResp = await fetch(directUrl, {
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0'
-      },
-      redirect: 'follow',
-      referrerPolicy: 'strict-origin-when-cross-origin'
-    });
+    // First search for the author to get their Semantic Scholar ID
+    const authorSearchUrl = `https://api.semanticscholar.org/graph/v1/author/search?query=${encodeURIComponent(scholarId)}&fields=authorId,name,affiliations,paperCount,citationCount,hIndex&limit=1`;
     
-    if (!directResp.ok) {
-      console.log('← direct Scholar request failed:', directResp.status);
-      return res.status(directResp.status).json({ 
-        error: `Google Scholar request failed with status: ${directResp.status}`,
-        message: 'Try again later or use the bypassCache=true parameter to force a fresh request.'
-      });
-    }
+    const authorResp = await fetch(authorSearchUrl);
     
-    const html = await directResp.text();
-    console.log(`← received HTML response of length: ${html.length}`);
-    
-    // Check for captcha or other detection
-    if (html.includes('Our systems have detected unusual traffic') || 
-        html.includes('recaptcha') ||
-        html.includes('robot') ||
-        html.length < 5000) {
-      console.log('← Google Scholar is showing a captcha or detected automation');
-      return res.status(403).json({ 
-        error: 'Google Scholar showing captcha or detected automation',
+    if (!authorResp.ok) {
+      console.log('← Semantic Scholar author search failed:', authorResp.status);
+      return res.status(authorResp.status).json({ 
+        error: `Semantic Scholar API request failed with status: ${authorResp.status}`,
         message: 'Try again later'
       });
     }
     
-    const $ = cheerio.load(html);
+    const authorData = await authorResp.json();
+    console.log('← author search results:', JSON.stringify(authorData));
+    
+    if (!authorData.data || authorData.data.length === 0) {
+      return res.status(404).json({ error: 'Author not found on Semantic Scholar' });
+    }
+    
+    const authorId = authorData.data[0].authorId;
+    
+    // Now get the author's papers
+    const papersUrl = `https://api.semanticscholar.org/graph/v1/author/${authorId}/papers?fields=title,abstract,url,venue,year,authors,citationCount,openAccessPdf&limit=100`;
+    const papersResp = await fetch(papersUrl);
+    
+    if (!papersResp.ok) {
+      console.log('← Semantic Scholar papers request failed:', papersResp.status);
+      return res.status(papersResp.status).json({ 
+        error: `Semantic Scholar API request failed with status: ${papersResp.status}`,
+        message: 'Try again later'
+      });
+    }
+    
+    const papersData = await papersResp.json();
+    console.log(`← received ${papersData.data ? papersData.data.length : 0} papers`);
+    
     let publications = [];
     
-    // Debug: How many rows were found?
-    const rowCount = $('tr.gsc_a_tr').length;
-    console.log(`← found ${rowCount} publication rows`);
+    if (papersData.data && papersData.data.length > 0) {
+      publications = papersData.data
+        .filter(paper => paper.year >= 2019) // Only include publications from 2019 or later
+        .map(paper => ({
+          title: paper.title || '',
+          link: paper.url || '',
+          authors: paper.authors ? paper.authors.map(a => a.name) : [],
+          venue: paper.venue || '',
+          year: paper.year ? paper.year.toString() : '',
+          citedBy: paper.citationCount || 0,
+          abstract: paper.abstract || '',
+          pdfLink: paper.openAccessPdf ? paper.openAccessPdf.url : null
+        }));
+    }
     
-    $('tr.gsc_a_tr').each((_, el) => {
-      const title = $('.gsc_a_at', el).text().trim();
-      const partialLink = $('.gsc_a_at', el).attr('data-href') || $('.gsc_a_at', el).attr('href');
-      const link = partialLink ? 'https://scholar.google.com' + partialLink : '';
-      const authors = $('.gs_gray', el).first().text().trim();
-      const venueYear = $('.gs_gray', el).last().text().trim();
-      const citedBy = $('.gsc_a_ac', el).text().trim();
-      
-      // Extract year and filter for publications from 2019 or later
-      const yearMatch = venueYear.match(/\d{4}/);
-      const year = yearMatch ? yearMatch[0] : '';
-      const yearNum = parseInt(year, 10);
-      
-      // Only include publications from 2019 or later
-      if (title && yearNum >= 2019) {
-        publications.push({
-          title,
-          link,
-          authors: authors.split(',').map(a => a.trim()),
-          venue: venueYear.split(',').slice(0, -1).join(',').trim(),
-          year,
-          citedBy: citedBy && !isNaN(parseInt(citedBy)) ? parseInt(citedBy) : 0
-        });
-      }
-    });
-    
-    console.log('← publications scraped from Scholar:', publications.length);
+    console.log('← publications from Semantic Scholar:', publications.length);
     
     // Store in cache
     publicationCache.set(cacheKey, {
@@ -123,7 +107,8 @@ export default async function handler(req, res) {
     
     return res.status(200).json({ 
       publications,
-      total: publications.length
+      total: publications.length,
+      source: 'semantic_scholar'
     });
   } catch (err) {
     console.error('← handler error:', err);
