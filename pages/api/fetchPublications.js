@@ -1,20 +1,24 @@
 import * as cheerio from 'cheerio';
 
-// Import Vercel KV with fallback to memory cache if KV is not available
-let kv;
-let useMemoryCache = false;
+// Memory cache as fallback
 const memoryCache = new Map();
 const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
+// Import KV if available, with proper error handling
+let kvClient = null;
 try {
-  // Try to import Vercel KV
-  const vercelKV = require('@vercel/kv');
-  kv = vercelKV;
-  console.log('→ Using Vercel KV for cache');
+  // Dynamic import to avoid errors when the module isn't available
+  const { kv } = require('@vercel/kv');
+  
+  // Verify if the KV client actually has the necessary methods
+  if (kv && typeof kv.get === 'function' && typeof kv.set === 'function') {
+    kvClient = kv;
+    console.log('→ Vercel KV initialized successfully');
+  } else {
+    console.log('→ Vercel KV imported but methods not available, using memory cache');
+  }
 } catch (error) {
-  // Fall back to memory cache if Vercel KV is not available
-  useMemoryCache = true;
-  console.log('→ Vercel KV not available, using memory cache instead');
+  console.log('→ Vercel KV not available, using memory cache', error.message);
 }
 
 export default async function handler(req, res) {
@@ -45,42 +49,70 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing scholarId' });
     }
     
+    // Cache handling functionality
     const cacheKey = `scholar:${scholarId}`;
-    let cachedData = null;
-    
-    // Check cache first (unless bypassing)
-    if (!bypassCache) {
+    const getCachedData = async () => {
+      if (bypassCache) return null;
+      
       try {
-        if (useMemoryCache) {
-          // Use memory cache
-          if (memoryCache.has(cacheKey)) {
-            cachedData = memoryCache.get(cacheKey);
-            if (Date.now() - cachedData.timestamp > CACHE_TTL) {
-              // Cache expired
-              cachedData = null;
-            }
+        if (kvClient) {
+          // Use Vercel KV
+          const data = await kvClient.get(cacheKey);
+          if (data) {
+            console.log('← Retrieved from Vercel KV cache');
+            return data;
           }
         } else {
-          // Use Vercel KV
-          cachedData = await kv.get(cacheKey);
+          // Use memory cache
+          if (memoryCache.has(cacheKey)) {
+            const data = memoryCache.get(cacheKey);
+            if (Date.now() - data.timestamp < CACHE_TTL) {
+              console.log('← Retrieved from memory cache');
+              return data;
+            } else {
+              // Expired
+              memoryCache.delete(cacheKey);
+            }
+          }
         }
-        
-        if (cachedData) {
-          console.log('← returning cached publications:', cachedData.publications.length);
-          return res.status(200).json({ 
-            publications: cachedData.publications,
-            total: cachedData.publications.length,
-            cached: true,
-            cachedAt: cachedData.timestamp,
-            cacheType: useMemoryCache ? 'memory' : 'vercel-kv'
-          });
-        }
-      } catch (cacheError) {
-        console.error('← cache error:', cacheError);
-        // Continue with API call if cache fails
+      } catch (error) {
+        console.error('← Cache retrieval error:', error.message);
       }
+      
+      return null;
+    };
+    
+    const setCachedData = async (data) => {
+      try {
+        if (kvClient) {
+          // Use Vercel KV
+          const ONE_DAY_IN_SECONDS = 24 * 60 * 60;
+          await kvClient.set(cacheKey, data, { ex: ONE_DAY_IN_SECONDS });
+          console.log('← Stored in Vercel KV cache');
+        } else {
+          // Use memory cache
+          memoryCache.set(cacheKey, data);
+          console.log('← Stored in memory cache');
+        }
+      } catch (error) {
+        console.error('← Cache storage error:', error.message);
+      }
+    };
+    
+    // Try to get from cache first
+    const cachedData = await getCachedData();
+    if (cachedData) {
+      console.log('← returning cached publications:', cachedData.publications.length);
+      return res.status(200).json({ 
+        publications: cachedData.publications,
+        total: cachedData.publications.length,
+        cached: true,
+        cachedAt: cachedData.timestamp,
+        cacheType: kvClient ? 'vercel-kv' : 'memory'
+      });
     }
     
+    // If not in cache, fetch fresh data
     let publications = [];
     let source = '';
     
@@ -123,26 +155,12 @@ export default async function handler(req, res) {
     }
     
     // Store successful result in cache
-    const cacheData = {
+    const dataToCache = {
       timestamp: Date.now(),
       publications
     };
     
-    try {
-      if (useMemoryCache) {
-        // Store in memory cache
-        memoryCache.set(cacheKey, cacheData);
-        console.log('← Stored in memory cache');
-      } else {
-        // Store in Vercel KV with 24-hour expiration
-        const ONE_DAY_IN_SECONDS = 24 * 60 * 60;
-        await kv.set(cacheKey, cacheData, { ex: ONE_DAY_IN_SECONDS });
-        console.log('← Stored in Vercel KV cache');
-      }
-    } catch (cacheError) {
-      console.error('← cache set error:', cacheError);
-      // Continue even if cache save fails
-    }
+    await setCachedData(dataToCache);
     
     return res.status(200).json({ 
       publications,
